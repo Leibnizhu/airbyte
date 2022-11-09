@@ -181,6 +181,7 @@ public class JdbcBufferedConsumerFactory {
         LOGGER.info("Executing finalization of tables.");
         sqlOperations.executeTransaction(database, queryList);
         LOGGER.info("Finalizing tables in destination completed.");
+        sqlOperations.afterDestinationCloseOperations(database, writeConfigs);
       }
       // clean up
       LOGGER.info("Cleaning tmp tables in destination started for {} streams", writeConfigs.size());

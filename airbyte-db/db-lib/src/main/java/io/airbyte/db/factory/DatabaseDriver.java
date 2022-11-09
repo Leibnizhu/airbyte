@@ -19,7 +19,9 @@ public enum DatabaseDriver {
   POSTGRESQL("org.postgresql.Driver", "jdbc:postgresql://%s:%d/%s"),
   REDSHIFT("com.amazon.redshift.jdbc.Driver", "jdbc:redshift://%s:%d/%s"),
   SNOWFLAKE("net.snowflake.client.jdbc.SnowflakeDriver", "jdbc:snowflake://%s/"),
-  YUGABYTEDB("com.yugabyte.Driver", "jdbc:yugabytedb://%s:%d/%s");
+  YUGABYTEDB("com.yugabyte.Driver", "jdbc:yugabytedb://%s:%d/%s"),
+  HIVE("org.apache.hive.jdbc.HiveDriver", "jdbc:hive2://%s:%d/%s"),
+  ;
 
   private final String driverClassName;
   private final String urlFormatString;

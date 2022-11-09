@@ -1,0 +1,8 @@
+{
+  "host" : "localhost",
+  "port" : 10000,
+  "username" : "hive",
+  "password" : "hive",
+  "database" : "db",
+  "jdbc_url_params" : "property1=pValue1&property2=pValue2"
+}

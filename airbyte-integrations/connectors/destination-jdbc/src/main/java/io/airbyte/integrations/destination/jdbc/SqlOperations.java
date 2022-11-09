@@ -137,4 +137,17 @@ public interface SqlOperations {
     LOGGER.info("No onDestinationCloseOperations required for this destination.");
   }
 
+  /**
+   * The method is responsible for executing some specific DB Engine logic in onClose method after Finalizing tables
+   * in destination completed. We can override this method to execute specific logic e.g. to handle any necessary
+   * migrations in the destination, etc.
+   *
+   * @param database     - Database that the connector is interacting with
+   * @param writeConfigs - schemas and tables (streams) will be discovered
+   */
+  default void afterDestinationCloseOperations(final JdbcDatabase database, final List<WriteConfig> writeConfigs) {
+    // do nothing
+    LOGGER.info("No afterDestinationCloseOperations required for this destination.");
+  }
+
 }
