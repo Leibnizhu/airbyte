@@ -8,6 +8,7 @@ import static org.apache.logging.log4j.util.Strings.isNotBlank;
 
 import io.airbyte.commons.json.Jsons;
 import io.airbyte.integrations.base.CommitOnStateAirbyteMessageConsumer;
+import io.airbyte.integrations.destination.buffered_stream_consumer.RecordSizeEstimator;
 import io.airbyte.integrations.destination.iceberg.config.WriteConfig;
 import io.airbyte.integrations.destination.iceberg.config.catalog.IcebergCatalogConfig;
 import io.airbyte.protocol.models.AirbyteMessage;
@@ -42,6 +43,7 @@ public class IcebergConsumer extends CommitOnStateAirbyteMessageConsumer {
   private final ConfiguredAirbyteCatalog catalog;
   private final IcebergCatalogConfig catalogConfig;
 
+  private final RecordSizeEstimator recordSizeEstimator = new RecordSizeEstimator();
   private Map<AirbyteStreamNameNamespacePair, WriteConfig> writeConfigs;
 
   public IcebergConsumer(IcebergOperations operations,
@@ -115,15 +117,16 @@ public class IcebergConsumer extends CommitOnStateAirbyteMessageConsumer {
     WriteConfig writeConfig = writeConfigs.get(nameNamespacePair);
     if (writeConfig == null) {
       throw new IllegalArgumentException(String.format(
-          "Message contained record from a stream that was not in the catalog. namespace: %s , stream: %s",
-          recordMessage.getNamespace(),
-          recordMessage.getStream()));
+        "Message contained record from a stream that was not in the catalog. namespace: %s , stream: %s",
+        recordMessage.getNamespace(),
+        recordMessage.getStream()));
     }
 
     // write data
-    Row row = new GenericRow(new Object[] {UUID.randomUUID().toString(), new Timestamp(recordMessage.getEmittedAt()),
+    Row row = new GenericRow(new Object[]{UUID.randomUUID().toString(), new Timestamp(recordMessage.getEmittedAt()),
       Jsons.serialize(recordMessage.getData())});
-    boolean needInsert = writeConfig.addData(row);
+    final long messageSizeInBytes = recordSizeEstimator.getEstimatedByteSize(recordMessage);
+    boolean needInsert = writeConfig.addData(row, messageSizeInBytes);
     if (needInsert) {
       appendToTempTable(writeConfig);
     }
