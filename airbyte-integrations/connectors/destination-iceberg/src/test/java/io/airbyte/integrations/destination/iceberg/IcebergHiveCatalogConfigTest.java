@@ -7,25 +7,16 @@ package io.airbyte.integrations.destination.iceberg;
 import static io.airbyte.integrations.destination.iceberg.IcebergConstants.FORMAT_TYPE_CONFIG_KEY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.when;
 
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
-import com.amazonaws.services.s3.model.InitiateMultipartUploadResult;
-import com.amazonaws.services.s3.model.ListObjectsRequest;
-import com.amazonaws.services.s3.model.UploadPartRequest;
-import com.amazonaws.services.s3.model.UploadPartResult;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.ImmutableMap;
 import io.airbyte.commons.json.Jsons;
+import io.airbyte.integrations.destination.iceberg.IcebergOperations.IcebergOperationsFactory;
 import io.airbyte.integrations.destination.iceberg.config.catalog.HiveCatalogConfig;
 import io.airbyte.integrations.destination.iceberg.config.catalog.IcebergCatalogConfig;
-import io.airbyte.integrations.destination.iceberg.config.catalog.IcebergCatalogConfigFactory;
 import io.airbyte.integrations.destination.iceberg.config.format.FormatConfig;
 import io.airbyte.integrations.destination.iceberg.config.storage.S3Config;
 import io.airbyte.integrations.destination.iceberg.config.storage.credential.S3AccessKeyCredentialConfig;
@@ -35,22 +26,14 @@ import java.io.IOException;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.s3a.S3AFileSystem;
-import org.apache.iceberg.Schema;
-import org.apache.iceberg.Table;
-import org.apache.iceberg.TableScan;
 import org.apache.iceberg.aws.s3.S3FileIO;
-import org.apache.iceberg.catalog.Catalog;
-import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.data.IcebergGenerics;
-import org.apache.iceberg.data.IcebergGenerics.ScanBuilder;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.ForbiddenException;
 import org.apache.iceberg.spark.SparkCatalog;
-import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
 
 @Slf4j
 class IcebergHiveCatalogConfigTest {
@@ -61,111 +44,98 @@ class IcebergHiveCatalogConfigTest {
   private static final String FAKE_ACCESS_KEY_ID = "fake-accessKeyId";
   private static final String FAKE_SECRET_ACCESS_KEY = "fake-secretAccessKey";
   private static final String FAKE_THRIFT_URI = "thrift://fake-thrift-uri";
-  private static MockedStatic<IcebergGenerics> mockedIcebergGenerics;
+  private static final String MIN_USABLE_CONFIG_JSON = """
+    {
+      "catalog_config": {
+        "catalog_type": "Hive",
+        "hive_thrift_uri": "thrift://server:9083",
+        "database": "test"
+      },
+      "storage_config": {
+        "storage_type": "S3",
+        "s3_warehouse_uri": "s3a://warehouse/hive",
+        "s3_bucket_region": "us-east-1"
+      },
+      "format_config": {
+        "format": "Parquet"
+      }
+    }""";
 
-  private AmazonS3 s3;
   private HiveCatalogConfig config;
-  private Catalog catalog;
-  private IcebergCatalogConfigFactory factory;
+  private IcebergOperationsFactory factory;
+  private IcebergOperations operations;
 
   @BeforeAll
   static void staticSetup() {
-    IcebergHiveCatalogConfigTest.mockedIcebergGenerics = mockStatic(IcebergGenerics.class);
   }
 
   @AfterAll
   static void staticStop() {
-    IcebergHiveCatalogConfigTest.mockedIcebergGenerics.close();
   }
 
   @BeforeEach
   void setup() throws IOException {
-    s3 = mock(AmazonS3.class);
-    final InitiateMultipartUploadResult uploadResult = mock(InitiateMultipartUploadResult.class);
-    final UploadPartResult uploadPartResult = mock(UploadPartResult.class);
-    when(s3.uploadPart(any(UploadPartRequest.class))).thenReturn(uploadPartResult);
-    when(s3.initiateMultipartUpload(any(InitiateMultipartUploadRequest.class))).thenReturn(uploadResult);
+    operations = mock(IcebergOperations.class);
 
-    TableScan tableScan = mock(TableScan.class);
-    when(tableScan.schema()).thenReturn(null);
-    Table tempTable = mock(Table.class);
-    when(tempTable.newScan()).thenReturn(tableScan);
-    ScanBuilder scanBuilder = mock(ScanBuilder.class);
-    when(scanBuilder.build()).thenReturn(new EmptyIterator());
-    when(IcebergGenerics.read(tempTable)).thenReturn(scanBuilder);
-
-    catalog = mock(Catalog.class);
-    when(catalog.createTable(any(), any())).thenReturn(tempTable);
-    when(catalog.dropTable(any())).thenReturn(true);
-
-    config = new HiveCatalogConfig(FAKE_THRIFT_URI) {
-
-      @Override
-      public Catalog genCatalog() {
-        return catalog;
-      }
-
-    };
+    config = new HiveCatalogConfig(FAKE_THRIFT_URI);
     config.setStorageConfig(S3Config.builder()
-        .warehouseUri(FAKE_WAREHOUSE_URI)
-        .bucketRegion("fake-region")
-        .endpoint(FAKE_ENDPOINT)
-        .endpointWithSchema(FAKE_ENDPOINT_WITH_SCHEMA)
-        .accessKeyId(FAKE_ACCESS_KEY_ID)
-        .secretKey(FAKE_SECRET_ACCESS_KEY)
-        .credentialConfig(new S3AccessKeyCredentialConfig(FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY))
-        .s3Client(s3)
-        .build());
+      .warehouseUri(FAKE_WAREHOUSE_URI)
+      .bucketRegion("fake-region")
+      .endpoint(FAKE_ENDPOINT)
+      .endpointWithSchema(FAKE_ENDPOINT_WITH_SCHEMA)
+      .accessKeyId(FAKE_ACCESS_KEY_ID)
+      .secretKey(FAKE_SECRET_ACCESS_KEY)
+      .credentialConfig(new S3AccessKeyCredentialConfig(FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY))
+      .build());
     config.setFormatConfig(new FormatConfig(Jsons.jsonNode(ImmutableMap.of(FORMAT_TYPE_CONFIG_KEY, "Parquet"))));
     config.setDefaultOutputDatabase("default");
 
-    factory = new IcebergCatalogConfigFactory() {
-
+    factory = new IcebergOperationsFactory() {
       @Override
-      public IcebergCatalogConfig fromJsonNodeConfig(final @NotNull JsonNode jsonConfig) {
-        return config;
+      public IcebergOperations getInstance(IcebergCatalogConfig icebergCatalogConfig, String sparkAppName) {
+        return operations;
       }
-
     };
   }
 
-  /**
-   * Test that check will fail if IAM user does not have listObjects permission
-   */
   @Test
-  public void checksHiveCatalogWithoutS3ListObjectPermission() {
+  public void checksTempTableAlreadyExistsTest() throws Exception {
     final IcebergDestination destinationFail = new IcebergDestination(factory);
-    doThrow(new AmazonS3Exception("Access Denied")).when(s3).listObjects(any(ListObjectsRequest.class));
-    final AirbyteConnectionStatus status = destinationFail.check(null);
-    log.info("status={}", status);
-    assertEquals(Status.FAILED, status.getStatus(), "Connection check should have failed");
-    assertTrue(status.getMessage().contains("Access Denied"), "Connection check returned wrong failure message");
-  }
-
-  @Test
-  public void checksTempTableAlreadyExists() {
-    final IcebergDestination destinationFail = new IcebergDestination(factory);
-    doThrow(new AlreadyExistsException("Table already exists: temp_1123412341234")).when(catalog)
-        .createTable(any(TableIdentifier.class), any(Schema.class));
-    final AirbyteConnectionStatus status = destinationFail.check(null);
+    doThrow(new AlreadyExistsException("Table already exists: temp_1123412341234"))
+      .when(operations)
+      .createAirbyteRawTable(anyString());
+    final AirbyteConnectionStatus status = destinationFail.check(Jsons.deserialize(MIN_USABLE_CONFIG_JSON));
     log.info("status={}", status);
     assertEquals(Status.FAILED, status.getStatus(), "Connection check should have failed");
     assertTrue(status.getMessage().contains("Table already exists"),
-        "Connection check returned wrong failure message");
+      "Connection check returned wrong failure message");
   }
 
   @Test
-  public void checksHiveThriftUri() throws IllegalAccessException {
+  public void checksSelectTableFailedTest() throws Exception {
+    final IcebergDestination destinationFail = new IcebergDestination(factory);
+    doThrow(new ForbiddenException("S3 Forbidden"))
+      .when(operations)
+      .collectTableContent(anyString(), anyInt());
+    final AirbyteConnectionStatus status = destinationFail.check(Jsons.deserialize(MIN_USABLE_CONFIG_JSON));
+    log.info("status={}", status);
+    assertEquals(Status.FAILED, status.getStatus(), "Connection check should have failed");
+    assertTrue(status.getMessage().contains("S3 Forbidden"),
+      "Connection check returned wrong failure message");
+  }
+
+  @Test
+  public void hiveThriftUriInvalidTest() throws IllegalAccessException {
     final IcebergDestination destinationFail = new IcebergDestination();
     final AirbyteConnectionStatus status = destinationFail.check(Jsons.deserialize("""
-                                                                                   {
-                                                                                     "catalog_config": {
-                                                                                       "catalog_type": "Hive",
-                                                                                       "hive_thrift_uri": "server:9083",
-                                                                                       "database": "test"
-                                                                                     },
-                                                                                     "storage_config": {
-                                                                                       "storage_type": "S3",
+      {
+        "catalog_config": {
+          "catalog_type": "Hive",
+          "hive_thrift_uri": "server:9083",
+          "database": "test"
+        },
+        "storage_config": {
+          "storage_type": "S3",
                                                                                        "access_key_id": "xxxxxxxxxxx",
                                                                                        "secret_access_key": "yyyyyyyyyyyy",
                                                                                        "s3_warehouse_uri": "s3a://warehouse/hive",
@@ -180,16 +150,6 @@ class IcebergHiveCatalogConfigTest {
     assertEquals(Status.FAILED, status.getStatus(), "Connection check should have failed");
     assertTrue(status.getMessage().contains("hive_thrift_uri must start with 'thrift://'"),
         "Connection check returned wrong failure message");
-  }
-
-  /**
-   * Test that check will succeed when IAM user has all required permissions
-   */
-  @Test
-  public void checksHiveCatalogWithS3Success() {
-    final IcebergDestination destinationSuccess = new IcebergDestination(factory);
-    final AirbyteConnectionStatus status = destinationSuccess.check(null);
-    assertEquals(Status.SUCCEEDED, status.getStatus(), "Connection check should have succeeded");
   }
 
   @Test
