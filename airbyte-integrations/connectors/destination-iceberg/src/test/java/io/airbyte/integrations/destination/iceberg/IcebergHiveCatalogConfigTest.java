@@ -136,16 +136,16 @@ class IcebergHiveCatalogConfigTest {
         },
         "storage_config": {
           "storage_type": "S3",
-                                                                                       "access_key_id": "xxxxxxxxxxx",
-                                                                                       "secret_access_key": "yyyyyyyyyyyy",
-                                                                                       "s3_warehouse_uri": "s3a://warehouse/hive",
-                                                                                       "s3_bucket_region": "us-east-1",
-                                                                                       "s3_endpoint": "your-own-minio-host:9000"
-                                                                                     },
-                                                                                     "format_config": {
-                                                                                       "format": "Parquet"
-                                                                                     }
-                                                                                   }"""));
+           "access_key_id": "xxxxxxxxxxx",
+           "secret_access_key": "yyyyyyyyyyyy",
+           "s3_warehouse_uri": "s3a://warehouse/hive",
+           "s3_bucket_region": "us-east-1",
+           "s3_endpoint": "your-own-minio-host:9000"
+         },
+         "format_config": {
+           "format": "Parquet"
+         }
+       }"""));
     log.info("status={}", status);
     assertEquals(Status.FAILED, status.getStatus(), "Connection check should have failed");
     assertTrue(status.getMessage().contains("hive_thrift_uri must start with 'thrift://'"),
